@@ -1,0 +1,130 @@
+{
+  "project": "Last Mile Operations - SQL Work Sample",
+  "description": "Senior BI Analyst / SQL Operations assessment for Last Mile operations in LATAM (Mexico, Brazil, Argentina, Colombia, Chile, Peru) to audit data quality, evaluate operational metrics (Productivity, Effectiveness, OTH), and investigate timezone issues and carrier consistency.",
+  "features": [
+    {
+      "id": "LM-PRE-001",
+      "name": "exploratory_data_analysis",
+      "title": "Exploratory Data Analysis (first_eda.py)",
+      "description": "Perform local Exploratory Data Analysis (EDA) on the raw CSV data files to discover data patterns, distribution shape, and initial data quality issues.",
+      "acceptance": [
+        "Analyze shape and summary statistics of the raw CSV files",
+        "Generate initial data quality profile reports",
+        "Identify discrepancies in dates and timestamps across tables"
+      ],
+      "sdd": false,
+      "status": "done"
+    },
+    {
+      "id": "LM-PRE-002",
+      "name": "bigquery_data_load",
+      "title": "BigQuery Data Loading & ETL (load_to_bigquery.py)",
+      "description": "Clean and format raw timestamps in Python to standard ISO-8601 representation and load all tables to BigQuery cleanly.",
+      "acceptance": [
+        "Develop a robust datetime parsing logic using Python and pandas",
+        "Upload distribution centers, partners, vehicles, routes, shipments, and logs into BigQuery",
+        "Ensure 0 bad records and correct schema parsing on load"
+      ],
+      "sdd": false,
+      "status": "done"
+    },
+    {
+      "id": "LM-001",
+      "name": "data_audit_validation",
+      "title": "Data Audit & Validation",
+      "description": "Audit the routes and shipments tables comprehensively to identify data quality issues affecting analysis and propose mitigations.",
+      "acceptance": [
+        "Identify main data quality issues (duplicates, null timestamps, timezone discrepancies, chrono violations, route overlaps, orphaned routes, invalid contract flags)",
+        "Provide SQL query executing validation checks",
+        "Document data quality handling strategy"
+      ],
+      "sdd": true,
+      "status": "done"
+    },
+    {
+      "id": "LM-002",
+      "name": "route_productivity",
+      "title": "Productivity - Route Utilization",
+      "description": "Measure route utilization efficiency for completed DELIVERY routes in April-May 2025 by country, identifying underperforming routes.",
+      "acceptance": [
+        "Calculate stops efficiency and capacity utilization by country",
+        "Analyze underperforming routes (stops efficiency < 60%)",
+        "Explain data handling decisions"
+      ],
+      "sdd": true,
+      "status": "done"
+    },
+    {
+      "id": "LM-003",
+      "name": "delivery_effectiveness",
+      "title": "Effectiveness - Delivery Rate",
+      "description": "Calculate delivery effectiveness rate for April-May 2025, breaking it down by partner country, and identify partner anomalies.",
+      "acceptance": [
+        "Calculate success rate by country and partner",
+        "Highlight exceptional/unusual performance and analyze root causes (synthetic homogeneity, sample size variance)"
+      ],
+      "sdd": true,
+      "status": "done"
+    },
+    {
+      "id": "LM-004",
+      "name": "on_time_handling",
+      "title": "OTH - On-Time Handling",
+      "description": "Evaluate schedule performance (On-Time Handling) by partner and vehicle type for completed DELIVERY routes in April-May 2025.",
+      "acceptance": [
+        "Calculate OTH by hour of fin and by duration",
+        "Identify underperforming partners and vehicles",
+        "Analyze differences between end time and duration metrics"
+      ],
+      "sdd": true,
+      "status": "done"
+    },
+    {
+      "id": "LM-005",
+      "name": "timezone_investigation",
+      "title": "Operational Patterns - Timezones",
+      "description": "Investigate late-night deliveries in Brazil and Colombia to determine if it is a timezone illusion (UTC vs local time).",
+      "acceptance": [
+        "Convert event timestamps from UTC to local time using timezone offset",
+        "Analyze real vs apparent late-night delivery rates",
+        "Highlight event_hour_utc corruption"
+      ],
+      "sdd": true,
+      "status": "done"
+    },
+    {
+      "id": "LM-006",
+      "name": "partner_consistency",
+      "title": "Partner Consistency (PT-014)",
+      "description": "Investigate inconsistent performance metrics for PT-014 (SaoPauloShip) and recommend whether to include it in reporting.",
+      "acceptance": [
+        "Find stale routes in IN_PROGRESS state",
+        "Analyze GPS synchronization/chronology issues",
+        "Explain route overlaps across different hubs and determine validity",
+        "Provide recommendation for exclusion/inclusion"
+      ],
+      "sdd": true,
+      "status": "done"
+    },
+    {
+      "id": "LM-007",
+      "name": "dashboard_narrative",
+      "title": "Dashboard & Strategic Narrative",
+      "description": "Synthesize findings from Q1-Q6 into a professional dashboard and a 2-3 page narrative document detailing operational recommendations.",
+      "acceptance": [
+        "Create operational dashboard mockups/visualizations",
+        "Write a narrative document explaining the operational story (Problem -> Evidence -> Action)",
+        "Guide the viewer to specific recommendations (Cono Sur fleet reallocation, hub dispatch audits, API integrations)"
+      ],
+      "sdd": true,
+      "status": "done"
+    }
+  ],
+  "rules": {
+    "one_feature_at_a_time": true,
+    "require_tests_to_close": true,
+    "require_approved_spec_to_implement": true,
+    "valid_status": ["pending", "spec_ready", "in_progress", "done", "blocked"],
+    "sdd_required_when": "feature has \"sdd\": true"
+  }
+}

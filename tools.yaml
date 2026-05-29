@@ -1,0 +1,276 @@
+sources:
+  meli-bq:
+    kind: bigquery
+    project: meli-last-mile-sql-assessment
+
+tools:
+  get_route_productivity:
+    kind: bigquery-sql
+    source: meli-bq
+    description: "Retrieves stops efficiency and capacity utilization metrics grouped by country for completed delivery routes."
+    parameters:
+      - name: start_date
+        type: string
+        description: "Start date (YYYY-MM-DD) for route filtering"
+      - name: end_date
+        type: string
+        description: "End date (YYYY-MM-DD) for route filtering"
+    statement: |
+      WITH deduped_shipments AS (
+        SELECT 
+          shipment_id,
+          route_id
+        FROM (
+          SELECT 
+            shipment_id,
+            route_id,
+            ROW_NUMBER() OVER(
+              PARTITION BY shipment_id 
+              ORDER BY status_change_timestamp DESC, delivery_attempt_count DESC
+            ) AS rn
+          FROM `meli-last-mile-sql-assessment.LAstmile.shipments_new`
+        )
+        WHERE rn = 1
+      ),
+      route_shipment_counts AS (
+        SELECT 
+          route_id, 
+          COUNT(shipment_id) AS shipment_count
+        FROM deduped_shipments
+        GROUP BY route_id
+      )
+      SELECT 
+        dc.country,
+        COUNT(DISTINCT r.route_id) AS total_completed_routes,
+        SUM(r.estimated_stops) AS total_estimated_stops,
+        SUM(r.actual_stops) AS total_actual_stops,
+        ROUND(SAFE_DIVIDE(SUM(r.actual_stops), SUM(r.estimated_stops)) * 100, 2) AS stops_efficiency_pct,
+        SUM(s.shipment_count) AS total_shipments_carried,
+        SUM(vt.max_capacity_units) AS total_max_capacity,
+        ROUND(SAFE_DIVIDE(SUM(s.shipment_count), SUM(vt.max_capacity_units)) * 100, 2) AS capacity_utilization_pct
+      FROM `meli-last-mile-sql-assessment.LAstmile.routes_new` AS r
+      JOIN `meli-last-mile-sql-assessment.LAstmile.distribution_centers` AS dc 
+        ON r.center_id = dc.center_id
+      JOIN `meli-last-mile-sql-assessment.LAstmile.vehicle_types` AS vt 
+        ON r.vehicle_type_id = vt.vehicle_type_id
+      LEFT JOIN route_shipment_counts AS s 
+        ON r.route_id = s.route_id
+      WHERE r.route_type = 'DELIVERY'
+        AND r.route_status = 'COMPLETED'
+        AND r.route_date BETWEEN @start_date AND @end_date
+      GROUP BY dc.country
+      ORDER BY stops_efficiency_pct DESC
+
+  get_delivery_effectiveness:
+    kind: bigquery-sql
+    source: meli-bq
+    description: "Retrieves shipment counts, delivered shipment counts, and delivery success rates by country and partner carrier."
+    parameters:
+      - name: start_date
+        type: string
+        description: "Start date (YYYY-MM-DD) for route filtering"
+      - name: end_date
+        type: string
+        description: "End date (YYYY-MM-DD) for route filtering"
+    statement: |
+      WITH deduped_shipments AS (
+        SELECT 
+          shipment_id, 
+          route_id,
+          last_status_detail
+        FROM (
+          SELECT 
+            shipment_id, 
+            route_id,
+            last_status_detail,
+            ROW_NUMBER() OVER(
+              PARTITION BY shipment_id 
+              ORDER BY status_change_timestamp DESC, delivery_attempt_count DESC
+            ) AS rn
+          FROM `meli-last-mile-sql-assessment.LAstmile.shipments_new`
+        )
+        WHERE rn = 1
+      )
+      SELECT 
+        dc.country,
+        r.partner_id,
+        p.partner_name,
+        COUNT(s.shipment_id) AS total_shipments,
+        COUNT(CASE WHEN s.last_status_detail = 'delivered' THEN 1 END) AS delivered_shipments,
+        ROUND(
+          SAFE_DIVIDE(
+            COUNT(CASE WHEN s.last_status_detail = 'delivered' THEN 1 END), 
+            COUNT(s.shipment_id)
+          ) * 100, 
+          2
+        ) AS success_rate_pct
+      FROM deduped_shipments AS s
+      JOIN `meli-last-mile-sql-assessment.LAstmile.routes_new` AS r
+        ON s.route_id = r.route_id
+      JOIN `meli-last-mile-sql-assessment.LAstmile.distribution_centers` AS dc
+        ON r.center_id = dc.center_id
+      JOIN `meli-last-mile-sql-assessment.LAstmile.partners` AS p
+        ON r.partner_id = p.partner_id
+      WHERE r.route_type = 'DELIVERY'
+        AND r.route_status = 'COMPLETED'
+        AND r.route_date BETWEEN @start_date AND @end_date
+      GROUP BY dc.country, r.partner_id, p.partner_name
+      ORDER BY dc.country ASC, success_rate_pct DESC
+
+  get_oth_schedule_metrics:
+    kind: bigquery-sql
+    source: meli-bq
+    description: "Retrieves On-Time Handling (OTH) metrics including OTH by End Time, OTH by Duration, and the OTH Gap by country, partner, and vehicle type."
+    parameters:
+      - name: start_date
+        type: string
+        description: "Start date (YYYY-MM-DD) for route filtering"
+      - name: end_date
+        type: string
+        description: "End date (YYYY-MM-DD) for route filtering"
+    statement: |
+      SELECT 
+        dc.country,
+        r.partner_id,
+        p.partner_name,
+        vt.vehicle_type_name,
+        EXTRACT(HOUR FROM r.planned_route_end_time) AS planned_end_hour,
+        COUNT(r.route_id) AS total_routes,
+        ROUND(SAFE_DIVIDE(COUNTIF(r.actual_route_end_time <= r.planned_route_end_time), COUNT(r.route_id)) * 100, 2) AS oth_end_time_pct,
+        ROUND(SAFE_DIVIDE(COUNTIF(TIMESTAMP_DIFF(r.actual_route_end_time, r.actual_route_start_time, MINUTE) <= TIMESTAMP_DIFF(r.planned_route_end_time, r.planned_route_start_time, MINUTE)), COUNT(r.route_id)) * 100, 2) AS oth_duration_pct,
+        ROUND(SAFE_DIVIDE(COUNTIF(TIMESTAMP_DIFF(r.actual_route_end_time, r.actual_route_start_time, MINUTE) <= TIMESTAMP_DIFF(r.planned_route_end_time, r.planned_route_start_time, MINUTE)), COUNT(r.route_id)) * 100, 2) -
+        ROUND(SAFE_DIVIDE(COUNTIF(r.actual_route_end_time <= r.planned_route_end_time), COUNT(r.route_id)) * 100, 2) AS oth_metric_gap
+      FROM `meli-last-mile-sql-assessment.LAstmile.routes_new` AS r
+      JOIN `meli-last-mile-sql-assessment.LAstmile.partners` AS p 
+        ON r.partner_id = p.partner_id
+      JOIN `meli-last-mile-sql-assessment.LAstmile.vehicle_types` AS vt 
+        ON r.vehicle_type_id = vt.vehicle_type_id
+      JOIN `meli-last-mile-sql-assessment.LAstmile.distribution_centers` AS dc 
+        ON r.center_id = dc.center_id
+      WHERE r.route_type = 'DELIVERY'
+        AND r.route_status = 'COMPLETED'
+        AND r.route_date BETWEEN @start_date AND @end_date
+        AND r.planned_route_start_time IS NOT NULL
+        AND r.planned_route_end_time IS NOT NULL
+        AND r.actual_route_start_time IS NOT NULL
+        AND r.actual_route_end_time IS NOT NULL
+        AND r.actual_route_end_time >= r.actual_route_start_time
+        AND r.planned_route_end_time >= r.planned_route_start_time
+      GROUP BY dc.country, r.partner_id, p.partner_name, vt.vehicle_type_name, planned_end_hour
+      ORDER BY dc.country ASC, total_routes DESC
+
+  get_timezone_log_corruption_metrics:
+    kind: bigquery-sql
+    source: meli-bq
+    description: "Retrieves dynamic timezone-corrected delivery metrics and audits precalculated event hour log corruption."
+    parameters:
+      - name: start_date
+        type: string
+        description: "Start date (YYYY-MM-DD) for route filtering"
+      - name: end_date
+        type: string
+        description: "End date (YYYY-MM-DD) for route filtering"
+    statement: |
+      WITH delivery_events AS (
+        SELECT 
+          dc.country,
+          dc.timezone_offset,
+          se.event_timestamp,
+          EXTRACT(HOUR FROM se.event_timestamp) AS hour_utc,
+          EXTRACT(HOUR FROM TIMESTAMP_ADD(se.event_timestamp, INTERVAL dc.timezone_offset HOUR)) AS hour_local,
+          se.event_hour_utc AS logged_hour_utc
+        FROM `meli-last-mile-sql-assessment.LAstmile.shipment_events_new` AS se
+        JOIN `meli-last-mile-sql-assessment.LAstmile.routes_new` AS r
+          ON se.route_id = r.route_id
+        JOIN `meli-last-mile-sql-assessment.LAstmile.distribution_centers` AS dc
+          ON r.center_id = dc.center_id
+        WHERE se.event_type = 'delivered'
+          AND r.route_type = 'DELIVERY'
+          AND r.route_status = 'COMPLETED'
+          AND r.route_date BETWEEN @start_date AND @end_date
+      )
+      SELECT 
+        country,
+        timezone_offset,
+        COUNT(*) AS total_deliveries,
+        COUNTIF(hour_utc >= 20) AS deliveries_utc_after_20,
+        ROUND(SAFE_DIVIDE(COUNTIF(hour_utc >= 20), COUNT(*)) * 100, 2) AS pct_utc_after_20,
+        COUNTIF(hour_local >= 20) AS deliveries_local_after_20,
+        ROUND(SAFE_DIVIDE(COUNTIF(hour_local >= 20), COUNT(*)) * 100, 2) AS pct_local_after_20,
+        COUNTIF(logged_hour_utc = 0 AND hour_utc >= 20) AS corrupt_records_count,
+        ROUND(SAFE_DIVIDE(COUNTIF(logged_hour_utc = 0 AND hour_utc >= 20), COUNT(*)) * 100, 2) AS corruption_pct
+      FROM delivery_events
+      GROUP BY country, timezone_offset
+      ORDER BY country ASC
+
+  get_carrier_consistency_metrics:
+    kind: bigquery-sql
+    source: meli-bq
+    description: "Profiles compliance, telemetry errors, stale routes, chronological violations, and contract expiration metrics for a given partner."
+    parameters:
+      - name: partner_id
+        type: string
+        description: "Unique partner identifier (e.g. PT-014)"
+      - name: start_date
+        type: string
+        description: "Start date (YYYY-MM-DD) for route filtering"
+      - name: end_date
+        type: string
+        description: "End date (YYYY-MM-DD) for route filtering"
+    statement: |
+      WITH partner_routes AS (
+        SELECT
+          r.route_id,
+          r.partner_id,
+          r.route_status,
+          r.route_date,
+          r.center_id,
+          r.vehicle_type_id,
+          r.actual_route_start_time,
+          r.actual_route_end_time,
+          p.partner_name,
+          p.active_flag,
+          p.contract_end_date
+        FROM `meli-last-mile-sql-assessment.LAstmile.routes_new` AS r
+        INNER JOIN `meli-last-mile-sql-assessment.LAstmile.partners` AS p
+          ON r.partner_id = p.partner_id
+        WHERE r.partner_id = @partner_id
+          AND r.route_date BETWEEN @start_date AND @end_date
+      ),
+      overlapping_routes AS (
+        SELECT
+          r1.route_id AS route_a_id,
+          r2.route_id AS route_b_id,
+          r1.center_id AS hub_a,
+          r2.center_id AS hub_b,
+          r1.vehicle_type_id AS vehicle_a,
+          r2.vehicle_type_id AS vehicle_b
+        FROM partner_routes AS r1
+        INNER JOIN partner_routes AS r2
+          ON r1.route_date = r2.route_date
+          AND r1.route_id < r2.route_id
+        WHERE r1.actual_route_start_time IS NOT NULL
+          AND r1.actual_route_end_time IS NOT NULL
+          AND r2.actual_route_start_time IS NOT NULL
+          AND r2.actual_route_end_time IS NOT NULL
+          AND r2.actual_route_start_time < r1.actual_route_end_time
+          AND r2.actual_route_end_time > r1.actual_route_start_time
+      )
+      SELECT
+        pr.partner_id,
+        pr.partner_name,
+        COUNT(DISTINCT pr.route_id) AS total_routes_assigned,
+        COUNTIF(pr.route_status = 'IN_PROGRESS') AS stale_in_progress_count,
+        ROUND(SAFE_DIVIDE(COUNTIF(pr.route_status = 'IN_PROGRESS'), COUNT(DISTINCT pr.route_id)) * 100, 2) AS stale_in_progress_pct,
+        COUNTIF(pr.route_status = 'COMPLETED') AS completed_routes_count,
+        COUNTIF(pr.route_status = 'COMPLETED' AND pr.actual_route_end_time < pr.actual_route_start_time) AS chrono_violations_count,
+        ROUND(SAFE_DIVIDE(COUNTIF(pr.route_status = 'COMPLETED' AND pr.actual_route_end_time < pr.actual_route_start_time), COUNTIF(pr.route_status = 'COMPLETED')) * 100, 2) AS chrono_violations_pct,
+        COUNTIF(pr.route_status = 'COMPLETED' AND (pr.actual_route_start_time IS NULL OR pr.actual_route_end_time IS NULL)) AS gps_sync_failures_count,
+        ROUND(SAFE_DIVIDE(COUNTIF(pr.route_status = 'COMPLETED' AND (pr.actual_route_start_time IS NULL OR pr.actual_route_end_time IS NULL)), COUNTIF(pr.route_status = 'COMPLETED')) * 100, 2) AS gps_sync_failures_pct,
+        (SELECT COUNT(DISTINCT route_a_id) + COUNT(DISTINCT route_b_id) FROM overlapping_routes) AS overlapping_routes_estimate,
+        (SELECT COUNTIF(hub_a != hub_b) FROM overlapping_routes) AS multi_hub_overlaps_count,
+        (SELECT COUNTIF(vehicle_a = vehicle_b AND hub_a != hub_b) FROM overlapping_routes) AS impossible_vehicle_allocations_count,
+        COUNTIF(pr.route_date > pr.contract_end_date OR pr.active_flag = 0) AS contract_expired_routes_count,
+        ROUND(SAFE_DIVIDE(COUNTIF(pr.route_date > pr.contract_end_date OR pr.active_flag = 0), COUNT(DISTINCT pr.route_id)) * 100, 2) AS contract_expired_routes_pct
+      FROM partner_routes AS pr
+      GROUP BY pr.partner_id, pr.partner_name

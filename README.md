@@ -1,5 +1,5 @@
 # LATAM Last Mile Logistics — Analytics & Strategic BI Pipeline
-Este repositorio contiene la plataforma analítica de Inteligencia de Negocios (BI) y el pipeline automatizado de toma de decisiones para la red de logística de última milla de Mercado Libre en Latinoamérica (Argentina, Brasil, Chile, Colombia, México y Perú).
+Este repositorio contiene la plataforma analítica de Inteligencia de Negocios (BI) y el pipeline automatizado de toma de decisiones para la red de logística de última milla.
 
 El desarrollo de este sistema analítico se ejecutó bajo una rigurosa metodología de **Desarrollo Guiado por Especificaciones (SDD)** operada por un **Harness Agéntico** multi-rol, garantizando un pipeline resiliente, trazable al 100% y libre de regresiones operacionales.
 
